@@ -168,6 +168,7 @@ final class ValueObjectTypecast implements CastableInterface, UncastableInterfac
 
     /**
      * A composite is stored as JSON text; a driver or caller may also hand over the decoded array.
+     * Only the outer type is checked here: the codec validates the shape.
      *
      * @return array<array-key, mixed>
      *

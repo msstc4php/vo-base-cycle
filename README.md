@@ -134,8 +134,20 @@ the value objects in code and pass instances. If a role's cast does receive requ
 `untrustedCastInput: true`: every value is then read as untrusted input, and a rule for a class that must never come
 from such input (`BoundedString`) is refused with a `LogicException` when Cycle builds the handler.
 
+For one role, put an instance in that role's schema (keep your mapper if you have custom codecs):
+
 ```php
-$container->bind(ValueObjectTypecast::class, static fn (string $role) => new ValueObjectTypecast($role, untrustedCastInput: true));
+S::TYPECAST_HANDLER => [new ValueObjectTypecast('signup', $mapper, untrustedCastInput: true), Typecast::class],
+```
+
+A container binding switches **every** role at once — and any role with a `BoundedString` rule then fails when its
+handler is built. Take the mapper as a parameter so a bound one (custom codecs) is still injected:
+
+```php
+$container->bind(
+    ValueObjectTypecast::class,
+    static fn (string $role, ValueObjectMapper $mapper) => new ValueObjectTypecast($role, $mapper, true),
+);
 ```
 
 ## Inherited roles

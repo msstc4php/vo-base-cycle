@@ -246,6 +246,22 @@ final class RoundTripTest extends TestCase
         $orm->make('account', ['email' => 'user@example.com'], typecast: true);
     }
 
+    public function testAContainerBoundUntrustedHandlerKeepsTheBoundMapper(): void
+    {
+        $container = new Container();
+        $container->bindSingleton(ValueObjectMapper::class, new ValueObjectMapper([new EmailAddressObjectCodec()]));
+        $container->bind(ValueObjectTypecast::class, $this->untrustedInputHandler(...));
+
+        $orm = $this->orm(container: $container, withTitle: false);
+
+        $account = $orm->make('account', ['email' => '{"address":"user@example.com"}'], typecast: true);
+        self::assertInstanceOf(Account::class, $account);
+        self::assertEquals(EmailAddress::from('user@example.com'), $account->email);
+
+        $this->expectException(TypecastException::class);
+        $orm->make('account', ['email' => '{"address":"not-an-email"}'], typecast: true);
+    }
+
     /**
      * Joined-table inheritance: Cycle chains the parent role's handler before the
      * child's, so a value can pass both; each converts it once.
@@ -273,11 +289,11 @@ final class RoundTripTest extends TestCase
         self::assertEquals(EmailAddress::from('backup@example.com'), $loaded->backupEmail);
     }
 
-    private function untrustedInputHandler(string $role): ValueObjectTypecast
+    private function untrustedInputHandler(string $role, ValueObjectMapper $mapper): ValueObjectTypecast
     {
         self::assertNotSame('', $role);
 
-        return new ValueObjectTypecast($role, untrustedCastInput: true);
+        return new ValueObjectTypecast($role, $mapper, true);
     }
 
     /**
@@ -305,7 +321,13 @@ final class RoundTripTest extends TestCase
         ValueObjectTypecast|string $handler = ValueObjectTypecast::class,
         ?Container $container = null,
         bool $withAdmin = false,
+        bool $withTitle = true,
     ): ORM {
+        $typecast = [...self::TYPECAST, ...$extraRules];
+        if (!$withTitle) {
+            unset($typecast['title']);
+        }
+
         $admin = [
             SchemaInterface::ENTITY => Admin::class,
             SchemaInterface::DATABASE => 'default',
@@ -325,7 +347,7 @@ final class RoundTripTest extends TestCase
                 SchemaInterface::TABLE => 'accounts',
                 SchemaInterface::PRIMARY_KEY => 'id',
                 SchemaInterface::COLUMNS => array_combine(array_keys(self::TYPECAST), array_keys(self::TYPECAST)),
-                SchemaInterface::TYPECAST => [...self::TYPECAST, ...$extraRules],
+                SchemaInterface::TYPECAST => $typecast,
                 SchemaInterface::TYPECAST_HANDLER => [$handler, Typecast::class],
                 SchemaInterface::RELATIONS => [],
             ],

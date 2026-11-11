@@ -17,6 +17,8 @@
   (JTI, parent columns incl. GeoCoordinates and BoundedString, child column EmailAddress) passes: each table's
   insert is uncast by its own role, nothing is converted twice.
 - `ORM::make($role, $data, typecast: true)` and hydration both run `cast()`; there is no way to tell the source.
+- A container binding of `ValueObjectTypecast` applies to every role; take `ValueObjectMapper $mapper` as a closure
+  parameter to keep a bound mapper (tested: `testAContainerBoundUntrustedHandlerKeepsTheBoundMapper`).
 - The handler is built lazily per role (`TypecastProvider::getTypecast()`), on first hydration or persist — not when
   the ORM is constructed.
 - Cycle calls `uncast()` only in write commands and embedded relations; query parameters (`where()`) are never
