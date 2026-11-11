@@ -1,0 +1,12 @@
+deptrac:
+  paths:
+    - ./src
+  layers:
+    # One area: the typecast handler. Neither the core nor Cycle is declared as a
+    # layer, so both are free to use; a new area under src/ gets its own layer.
+    - name: Typecast
+      collectors:
+        - type: directory
+          value: src/Typecast/.*
+  ruleset:
+    Typecast: ~
