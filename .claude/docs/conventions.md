@@ -6,12 +6,19 @@ A string rule that is a `ValueObject` or `BackedEnum` subclass. Supported by the
 the mapper cannot store → `LogicException` naming `role.field` (Cycle would otherwise drop it silently and hydrate
 the raw string into a typed property, failing far away). Everything else falls through to the next handler.
 
+## Trust
+
+`cast()` trusts by default (database rows). `untrustedCastInput: true` is the opt-in for roles whose cast also sees
+request data; it costs `BoundedString` on that role. `uncast()` always treats non-instances as untrusted.
+
 ## Errors
 
 - Invalid stored/raw value → `Cycle\ORM\Exception\TypecastException`, code 0, message in Cycle's own format
   ``Unable to typecast|uncast the `role.field` field: <cause>``, previous = the core's `InvalidValueObjectException`
   (or `JsonException` for malformed JSON).
 - Programmer errors (`LogicException`) are not wrapped.
+- A composite raw value that is neither JSON text nor an array, or JSON that is not an object/array, is an
+  `InvalidPayloadException` raised by the handler ("must be a JSON object").
 
 ## JSON
 

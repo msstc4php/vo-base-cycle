@@ -19,6 +19,7 @@ use Cycle\ORM\SchemaInterface;
 use DateTimeImmutable;
 use LogicException;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Account;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Admin;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\EmailAddressObjectCodec;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Priority;
 use MSSTC4PHP\ValueObject\Cycle\Typecast\ValueObjectTypecast;
@@ -29,12 +30,14 @@ use MSSTC4PHP\ValueObject\I18n\CountryCode;
 use MSSTC4PHP\ValueObject\Identity\EmailAddress;
 use MSSTC4PHP\ValueObject\Network\Port;
 use MSSTC4PHP\ValueObject\Network\QueryParameter;
+use MSSTC4PHP\ValueObject\Payload\ValueObjectMapper;
 use MSSTC4PHP\ValueObject\Primitive\BoundedString;
 use MSSTC4PHP\ValueObject\Primitive\Percentage;
 use MSSTC4PHP\ValueObject\Temporal\DateRange;
 use Override;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use Spiral\Core\Container;
 
 /**
  * A real Cycle ORM over SQLite in memory. Each load goes through a fresh ORM,
@@ -187,16 +190,94 @@ final class RoundTripTest extends TestCase
 
     public function testAHandlerInstanceCarriesCustomCodecs(): void
     {
-        $handler = new ValueObjectTypecast('account', [new EmailAddressObjectCodec()]);
+        $handler = new ValueObjectTypecast('account', new ValueObjectMapper([new EmailAddressObjectCodec()]));
         $account = new Account();
         $account->email = EmailAddress::from('user@example.com');
 
         new EntityManager($this->orm(handler: $handler))->persist($account)->run();
 
         self::assertSame('{"address":"user@example.com"}', $this->storedRows()[0]['email']);
-        $loaded = $this->orm(handler: new ValueObjectTypecast('account', [new EmailAddressObjectCodec()]))->getRepository('account')->findByPK(1);
+        $loaded = $this->orm(handler: new ValueObjectTypecast('account', new ValueObjectMapper([new EmailAddressObjectCodec()])))->getRepository('account')->findByPK(1);
         self::assertInstanceOf(Account::class, $loaded);
         self::assertEquals(EmailAddress::from('user@example.com'), $loaded->email);
+    }
+
+    /**
+     * The form for a cached or compiled schema, which can only hold class names.
+     */
+    public function testAMapperBoundInTheContainerCarriesCustomCodecs(): void
+    {
+        $container = new Container();
+        $container->bindSingleton(ValueObjectMapper::class, new ValueObjectMapper([new EmailAddressObjectCodec()]));
+
+        $account = new Account();
+        $account->email = EmailAddress::from('user@example.com');
+
+        new EntityManager($this->orm(container: $container))->persist($account)->run();
+
+        self::assertSame('{"address":"user@example.com"}', $this->storedRows()[0]['email']);
+        $loaded = $this->orm(container: $container)->getRepository('account')->findByPK(1);
+        self::assertInstanceOf(Account::class, $loaded);
+        self::assertEquals(EmailAddress::from('user@example.com'), $loaded->email);
+    }
+
+    /**
+     * ORM::make(..., typecast: true) runs cast(), which trusts its input: request
+     * data given to it chooses a BoundedString's bounds. Pinned so a change shows.
+     */
+    public function testMakeWithTypecastTrustsItsInput(): void
+    {
+        $account = $this->orm()->make('account', ['title' => '{"value":"Hi","minLength":0,"maxLength":null}'], typecast: true);
+
+        self::assertInstanceOf(Account::class, $account);
+        self::assertEquals(new BoundedString('Hi', 0), $account->title);
+    }
+
+    public function testUntrustedCastInputRefusesBoundedStringBeforeMakeBuildsAnything(): void
+    {
+        $container = new Container();
+        $container->bind(ValueObjectTypecast::class, $this->untrustedInputHandler(...));
+
+        $orm = $this->orm(container: $container);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('`account.title` is ' . BoundedString::class . ', which cannot be read from untrusted input');
+
+        $orm->make('account', ['email' => 'user@example.com'], typecast: true);
+    }
+
+    /**
+     * Joined-table inheritance: Cycle chains the parent role's handler before the
+     * child's, so a value can pass both; each converts it once.
+     */
+    public function testAnInheritedRoleRoundTripsBothTables(): void
+    {
+        $this->database()->execute('CREATE TABLE admins (id INTEGER PRIMARY KEY, backup_email TEXT)');
+        $admin = new Admin();
+        $admin->email = EmailAddress::from('admin@example.com');
+        $admin->location = GeoCoordinates::fromFloats(1.0, 2.0);
+        $admin->title = new BoundedString('Boss', 1, 10);
+        $admin->backupEmail = EmailAddress::from('backup@example.com');
+
+        new EntityManager($this->orm(withAdmin: true))->persist($admin)->run();
+
+        self::assertSame('admin@example.com', $this->storedRows()[0]['email']);
+        self::assertSame('{"value":"Boss","minLength":1,"maxLength":10}', $this->storedRows()[0]['title']);
+        self::assertSame([['id' => 1, 'backup_email' => 'backup@example.com']], $this->database()->select()->from('admins')->fetchAll());
+
+        $loaded = $this->orm(withAdmin: true)->getRepository('admin')->findByPK(1);
+        self::assertInstanceOf(Admin::class, $loaded);
+        self::assertEquals(EmailAddress::from('admin@example.com'), $loaded->email);
+        self::assertEquals(GeoCoordinates::fromFloats(1.0, 2.0), $loaded->location);
+        self::assertEquals(new BoundedString('Boss', 1, 10), $loaded->title);
+        self::assertEquals(EmailAddress::from('backup@example.com'), $loaded->backupEmail);
+    }
+
+    private function untrustedInputHandler(string $role): ValueObjectTypecast
+    {
+        self::assertNotSame('', $role);
+
+        return new ValueObjectTypecast($role, untrustedCastInput: true);
     }
 
     /**
@@ -219,9 +300,25 @@ final class RoundTripTest extends TestCase
     /**
      * @param array<non-empty-string, string> $extraRules
      */
-    private function orm(array $extraRules = [], ValueObjectTypecast|string $handler = ValueObjectTypecast::class): ORM
-    {
-        return new ORM(new Factory($this->dbal), new Schema([
+    private function orm(
+        array $extraRules = [],
+        ValueObjectTypecast|string $handler = ValueObjectTypecast::class,
+        ?Container $container = null,
+        bool $withAdmin = false,
+    ): ORM {
+        $admin = [
+            SchemaInterface::ENTITY => Admin::class,
+            SchemaInterface::DATABASE => 'default',
+            SchemaInterface::TABLE => 'admins',
+            SchemaInterface::PRIMARY_KEY => 'id',
+            SchemaInterface::PARENT => 'account',
+            SchemaInterface::COLUMNS => ['id' => 'id', 'backupEmail' => 'backup_email'],
+            SchemaInterface::TYPECAST => ['id' => 'int', 'backupEmail' => EmailAddress::class],
+            SchemaInterface::TYPECAST_HANDLER => [ValueObjectTypecast::class, Typecast::class],
+            SchemaInterface::RELATIONS => [],
+        ];
+
+        return new ORM(new Factory($this->dbal, null, $container), new Schema([
             'account' => [
                 SchemaInterface::ENTITY => Account::class,
                 SchemaInterface::DATABASE => 'default',
@@ -232,7 +329,7 @@ final class RoundTripTest extends TestCase
                 SchemaInterface::TYPECAST_HANDLER => [$handler, Typecast::class],
                 SchemaInterface::RELATIONS => [],
             ],
-        ]));
+        ] + ($withAdmin ? ['admin' => $admin] : [])));
     }
 
     /**

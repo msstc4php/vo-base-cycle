@@ -35,8 +35,13 @@ PDO SQLite returns native ints/floats, so nothing in this package relied on the 
 `PostIncDecToPreIncDecRector` skip in the template rector.php is reported as deprecated/never registered. Template
 noise; the file must stay byte-identical.
 
-## `BoundedString` in an inherited role
+## `ORM::make(..., typecast: true)` is a trusted path
 
-A child role's `uncast()` turns a `BoundedString` into JSON text; if the parent role's handler also claims that
-column it then sees a raw string and refuses it (`LogicException`). Untested — only matters if Cycle hands the same
-column to both handlers in a JTI hierarchy; declare the rule on one role only.
+It runs the same `cast()` as hydration, so request data passed there is trusted: a `BoundedString` payload chooses
+its own bounds (pinned by `testMakeWithTypecastTrustsItsInput`). Validate first, build instances in code, or use
+`untrustedCastInput: true` for that role.
+
+## Leading backslash in rules
+
+A rule may be written `'\App\Foo'` (e.g. `'\' . Foo::class` or a copied FQCN). `class_exists()`/`is_subclass_of()` accept
+it, but the mapper's codec map is keyed without it, so a composite would be missed. Rules are `ltrim`med.

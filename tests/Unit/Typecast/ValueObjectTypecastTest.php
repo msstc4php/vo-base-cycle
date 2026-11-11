@@ -18,6 +18,7 @@ use MSSTC4PHP\ValueObject\I18n\CountryCode;
 use MSSTC4PHP\ValueObject\Identity\EmailAddress;
 use MSSTC4PHP\ValueObject\Network\Port;
 use MSSTC4PHP\ValueObject\Network\QueryParameter;
+use MSSTC4PHP\ValueObject\Payload\ValueObjectMapper;
 use MSSTC4PHP\ValueObject\Primitive\BoundedString;
 use MSSTC4PHP\ValueObject\Primitive\Percentage;
 use MSSTC4PHP\ValueObject\Temporal\DateRange;
@@ -38,6 +39,16 @@ final class ValueObjectTypecastTest extends TestCase
         'location' => GeoCoordinates::class,
         'period' => DateRange::class,
         'title' => BoundedString::class,
+    ];
+
+    private const array RULES_WITHOUT_TITLE = [
+        'email' => EmailAddress::class,
+        'port' => Port::class,
+        'discount' => Percentage::class,
+        'country' => CountryCode::class,
+        'priority' => Priority::class,
+        'location' => GeoCoordinates::class,
+        'period' => DateRange::class,
     ];
 
     public function testClaimsSupportedClassesAndReturnsTheRestInOrder(): void
@@ -220,7 +231,8 @@ final class ValueObjectTypecastTest extends TestCase
         yield 'wrong type' => ['port', 'eighty', InvalidPayloadException::class, 'Unable to typecast the `account.port` field: A ' . Port::class . ' payload must be an integer, string given.'];
         yield 'unknown enum case' => ['country', 'XX', InvalidPayloadException::class, 'Unable to typecast the `account.country` field: "XX" is not a case of ' . CountryCode::class . '.'];
         yield 'malformed JSON' => ['location', '{"lat":', JsonException::class, 'Unable to typecast the `account.location` field: Syntax error'];
-        yield 'JSON of the wrong shape' => ['location', '"52.52,13.405"', InvalidPayloadException::class, 'Unable to typecast the `account.location` field: A ' . GeoCoordinates::class . ' payload must be an array, string given.'];
+        yield 'JSON of the wrong shape' => ['location', '"52.52,13.405"', InvalidPayloadException::class, 'Unable to typecast the `account.location` field: A ' . GeoCoordinates::class . ' payload must be a JSON object, string given.'];
+        yield 'neither JSON text nor an array' => ['location', 52, InvalidPayloadException::class, 'Unable to typecast the `account.location` field: A ' . GeoCoordinates::class . ' payload must be a JSON object, int given.'];
     }
 
     /**
@@ -242,13 +254,13 @@ final class ValueObjectTypecastTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{mixed, non-empty-string}>
+     * @return iterable<string, array{mixed}>
      */
     public static function provideRawBoundedStrings(): iterable
     {
-        yield 'JSON text' => ['{"value":"Hi","minLength":0,"maxLength":null}', 'string'];
-        yield 'decoded array' => [['value' => 'Hi', 'minLength' => 0, 'maxLength' => null], 'array'];
-        yield 'bare string' => ['Hi', 'string'];
+        yield 'JSON text' => ['{"value":"Hi","minLength":0,"maxLength":null}'];
+        yield 'decoded array' => [['value' => 'Hi', 'minLength' => 0, 'maxLength' => null]];
+        yield 'bare string' => ['Hi'];
     }
 
     /**
@@ -256,12 +268,59 @@ final class ValueObjectTypecastTest extends TestCase
      * produced it choose them.
      */
     #[DataProvider('provideRawBoundedStrings')]
-    public function testARawBoundedStringIsNeverWritten(mixed $raw, string $type): void
+    public function testARawBoundedStringIsNeverWritten(mixed $raw): void
+    {
+        try {
+            $this->typecast()->uncast(['title' => $raw]);
+            self::fail('No exception thrown.');
+        } catch (TypecastException $e) {
+            self::assertSame('Unable to uncast the `account.title` field: A ' . BoundedString::class . ' cannot be read from untrusted input: its payload carries its own constraints.', $e->getMessage());
+            self::assertInstanceOf(InvalidPayloadException::class, $e->getPrevious());
+        }
+    }
+
+    /**
+     * cast() cannot tell a database row from request data: by default it trusts
+     * its input, so a BoundedString keeps whatever bounds the payload names.
+     */
+    public function testCastTrustsItsInputByDefault(): void
+    {
+        $title = $this->typecast()->cast(['title' => '{"value":"Hi","minLength":0,"maxLength":null}'])['title'];
+
+        self::assertEquals(new BoundedString('Hi', 0), $title);
+    }
+
+    public function testUntrustedCastInputRefusesATrustedSourceOnlyRule(): void
     {
         $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('The `account.title` field holds a ' . $type . ', but ' . BoundedString::class . ' is written only from an instance: its payload carries its own constraints.');
+        $this->expectExceptionMessage('The typecast rule of `account.title` is ' . BoundedString::class . ', which cannot be read from untrusted input; this handler is configured for untrusted cast input.');
 
-        $this->typecast()->uncast(['title' => $raw]);
+        new ValueObjectTypecast('account', untrustedCastInput: true)->setRules(['email' => EmailAddress::class, 'title' => BoundedString::class]);
+    }
+
+    public function testUntrustedCastInputStillCastsEveryOtherKind(): void
+    {
+        $typecast = new ValueObjectTypecast('account', untrustedCastInput: true);
+        $typecast->setRules(self::RULES_WITHOUT_TITLE);
+
+        $cast = $typecast->cast(['email' => 'user@example.com', 'priority' => '9', 'location' => '{"lat":1,"lng":2}']);
+
+        self::assertEquals(['email' => EmailAddress::from('user@example.com'), 'priority' => Priority::High, 'location' => GeoCoordinates::fromFloats(1.0, 2.0)], $cast);
+    }
+
+    public function testALeadingBackslashInARuleIsIgnored(): void
+    {
+        $typecast = new ValueObjectTypecast('account', new ValueObjectMapper([new EmailAddressObjectCodec()]));
+        self::assertSame([], $typecast->setRules(['location' => '\\' . GeoCoordinates::class, 'email' => '\\' . EmailAddress::class]));
+
+        self::assertEquals(
+            ['location' => GeoCoordinates::fromFloats(1.0, 2.0), 'email' => EmailAddress::from('user@example.com')],
+            $typecast->cast(['location' => '{"lat":1,"lng":2}', 'email' => '{"address":"user@example.com"}']),
+        );
+        self::assertSame(
+            ['location' => '{"lat":1,"lng":2}', 'email' => '{"address":"user@example.com"}'],
+            $typecast->uncast(['location' => GeoCoordinates::fromFloats(1.0, 2.0), 'email' => EmailAddress::from('user@example.com')]),
+        );
     }
 
     public function testAJsonUnencodableCompositeFailsLoudly(): void
@@ -280,7 +339,7 @@ final class ValueObjectTypecastTest extends TestCase
 
     public function testACustomCodecTurnsAClassIntoAJsonComposite(): void
     {
-        $typecast = new ValueObjectTypecast('account', [new EmailAddressObjectCodec()]);
+        $typecast = new ValueObjectTypecast('account', new ValueObjectMapper([new EmailAddressObjectCodec()]));
         $typecast->setRules(['email' => EmailAddress::class, 'location' => GeoCoordinates::class]);
 
         self::assertSame(['email' => '{"address":"user@example.com"}'], $typecast->uncast(['email' => EmailAddress::from('user@example.com')]));

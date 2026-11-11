@@ -20,7 +20,8 @@ Neither this package nor the core is on Packagist yet, so register both GitHub r
 }
 ```
 
-Requires PHP >= 8.4, `cycle/orm` ^2.10 and `cycle/database` ^2.12.
+Requires PHP >= 8.4, `cycle/orm` ^2.10 and `cycle/database` ^2.12. `cycle/database` is required explicitly
+because older releases that `cycle/orm` ^2.10 would accept emit PHP 8.4 deprecations.
 
 ## Usage with a schema array
 
@@ -47,7 +48,8 @@ use MSSTC4PHP\ValueObject\Cycle\Typecast\ValueObjectTypecast;
 ],
 ```
 
-Cycle instantiates the handler once per role and passes the role name; nothing else to configure.
+Cycle instantiates the handler once per role and passes the role name; nothing else to configure. A rule may be
+written with a leading backslash (`'\App\Money'`).
 
 ## Usage with annotated entities
 
@@ -75,11 +77,23 @@ class Account
 
 ## Custom codecs
 
-A composite of your own needs a `PayloadCodec` (see the core). Pass the codecs to a handler instance — one instance
-per role, because a handler keeps the rules of the role it was built for:
+A composite of your own needs a `PayloadCodec` (see the core). The handler takes a `ValueObjectMapper`; Cycle builds
+handlers through its Spiral container, which injects a mapper bound there. This works with cached or compiled
+schemas, since the schema keeps only the class name:
 
 ```php
-S::TYPECAST_HANDLER => [new ValueObjectTypecast('account', [new MoneyCodec()]), Typecast::class],
+use Spiral\Core\Container;
+
+$container = new Container();
+$container->bindSingleton(ValueObjectMapper::class, new ValueObjectMapper([new MoneyCodec()]));
+$orm = new ORM(new Factory($dbal, null, $container), $schema);
+```
+
+Without a container, put an instance in the schema, one per role (a handler keeps the rules of the role it was
+built for):
+
+```php
+S::TYPECAST_HANDLER => [new ValueObjectTypecast('account', new ValueObjectMapper([new MoneyCodec()])), Typecast::class],
 ```
 
 ## Stored formats
@@ -90,7 +104,7 @@ S::TYPECAST_HANDLER => [new ValueObjectTypecast('account', [new MoneyCodec()]), 
 | int-backed | `Port`, `PositiveInt` | the integer | an integer or a canonical digit string |
 | float-backed | `Percentage`, `Latitude` | the number | a number or a plain decimal string |
 | backed enum | `CountryCode`, `CurrencyCode`, any `BackedEnum` | the enum's value (code) | its value |
-| composite | `GeoCoordinates`, `DateRange`, `IntRange`, `BoundedString` | JSON text, e.g. `{"lat":52.52,"lng":13.405}` | JSON text |
+| composite | `GeoCoordinates`, `DateRange`, `IntRange`, `BoundedString` | JSON text, e.g. `{"lat":52.52,"lng":13.405}` | JSON text, or an already decoded array |
 
 ## Behaviour
 
@@ -99,13 +113,36 @@ S::TYPECAST_HANDLER => [new ValueObjectTypecast('account', [new MoneyCodec()]), 
   field: ...``); the value object's `InvalidValueObjectException` is the previous exception. No silent `null` —
   unlike Cycle's own enum rule, which turns an unknown code into `null`.
 - Writing an instance stores its payload. A raw value in a value-object column (an untyped property) is validated
-  as untrusted input and stored in canonical form; an invalid one fails the write. A raw `BoundedString` is refused
-  with a `LogicException`: its payload carries its own bounds.
+  as untrusted input and stored in canonical form; an invalid one fails the write with `TypecastException`. A raw
+  `BoundedString` always fails: its payload carries its own bounds.
 - Rules that are not value-object or enum classes (`'int'`, `'datetime'`, callables, other classes) are left to the
   next handler. A value-object class without a payload form (e.g. `QueryParameter`) is a `LogicException` when
   Cycle first builds the role's typecast — otherwise Cycle would silently drop the rule.
 - In `where()` clauses pass the stored form (`(string) $email`, `$country->value`); Cycle does not typecast query
   parameters.
+
+## Trusted and untrusted input
+
+`cast()` cannot tell a database row from other data, so it trusts its input. That matters for two paths that are
+**trusted** although they look like input handling:
+
+- `ORM::make($role, $data, typecast: true)`
+- a mapper's `init()` / hydration with data you assembled yourself
+
+Request data passed there can, for example, choose a `BoundedString`'s bounds. Validate the input first, or build
+the value objects in code and pass instances. If a role's cast does receive request data, build its handler with
+`untrustedCastInput: true`: every value is then read as untrusted input, and a rule for a class that must never come
+from such input (`BoundedString`) is refused with a `LogicException` when Cycle builds the handler.
+
+```php
+$container->bind(ValueObjectTypecast::class, static fn (string $role) => new ValueObjectTypecast($role, untrustedCastInput: true));
+```
+
+## Inherited roles
+
+With joined-table inheritance (`SchemaInterface::PARENT`) give each role its own `TYPECAST` and
+`TYPECAST_HANDLER` for its own columns. Cycle chains the parent role's handler with the child's; a value already
+converted by one is left alone by the other, so both tables round-trip (covered by a test).
 
 ## Development
 
