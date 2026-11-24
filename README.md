@@ -86,6 +86,8 @@ use Spiral\Core\Container;
 
 $container = new Container();
 $container->bindSingleton(ValueObjectMapper::class, new ValueObjectMapper([new MoneyCodec()]));
+// a package's whole set through its ProvidesCodecs class, e.g. vo-documents' composite names:
+// new ValueObjectMapper(\MSSTC4PHP\ValueObject\Documents\Codecs::all())
 $orm = new ORM(new Factory($dbal, null, $container), $schema);
 ```
 
