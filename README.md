@@ -181,7 +181,8 @@ converted by one is left alone by the other, so both tables round-trip (covered 
 - **Enums:** a backed-enum rule is claimed by this handler, and an unknown stored code fails instead of becoming
   `null`.
 - **Versions:** a minor may add support for a new Cycle or PHP major; dropping a supported Cycle or PHP version needs
-  a major.
+  a major, and so does raising the floor of any third-party dependency (Cycle, PHP). A minor may raise the floor of a
+  `msstc4php/*` package within its major (those follow the same promise).
 
 A minor never refuses a value an earlier 1.x accepted: the handler adds no validation of its own, the value objects
 (vo-base and the domain packages) decide, and they follow the same rule.

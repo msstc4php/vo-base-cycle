@@ -32,10 +32,11 @@ PDO SQLite returns native ints/floats, so nothing in this package relied on the 
 
 ## Roave bc-check and `new` in parameter initializers
 
-Roave cannot compile `ValueObjectMapper $mapper = new ValueObjectMapper()` (same failure vo-base-laravel hit on
-0.2.0). 1.0 uses `?ValueObjectMapper $mapper = null`. The CI job compares against the latest stable tag, so the
-first run on the 1.0.0 commit still compares against v0.1.0 (with the old initializer) and may be red; it clears once
-v1.0.0 is the base. Never reintroduce a `new` initializer in a public signature.
+Roave 8.27 compares `new` initializers by their printed expression: an unchanged one passes, a changed one is
+SKIPPED and counted as a break. 1.0 changed `ValueObjectMapper $mapper = new ValueObjectMapper()` to
+`?ValueObjectMapper $mapper = null`, so the first run on the 1.0.0 commit (base v0.1.0) WILL be red (exit 3); it clears
+once v1.0.0 is the base. Never put a `new` initializer in a public signature again: any later change of it is a
+reported break.
 
 ## Rector deprecation warning
 

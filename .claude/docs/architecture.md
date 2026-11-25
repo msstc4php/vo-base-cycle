@@ -8,7 +8,7 @@ the core and Cycle are not layers, so they are free to use).
 - Constructor: `(non-empty-string $role, ?ValueObjectMapper $mapper = null, bool $untrustedCastInput = false)`;
   `null` → `new ValueObjectMapper()` in the body. The mapper is a constructor dependency so Cycle's Spiral container
   can inject a bound one (custom codecs with cached schemas). Not `= new ValueObjectMapper()` in the signature: Roave
-  bc-check cannot compile a `new` initializer (see known-issues). Frozen for 1.x (README "Backward compatibility").
+  bc-check counts any change of a `new` initializer as a break (see known-issues). Frozen for 1.x (README "Backward compatibility").
 - An abstract `ResolvesConcreteClass` rule (vo-base ^1.4) works without handler code: `is_subclass_of()` accepts the
   abstract class, the mapper's `fromPayload()` calls its `from()`, and `instanceof $column['class']` accepts the
   subclass instance. Pinned by the `AbstractCode`/`ShortCode`/`LongCode` fixtures.

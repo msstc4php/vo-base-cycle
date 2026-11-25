@@ -307,6 +307,20 @@ final class ValueObjectTypecastTest extends TestCase
     }
 
     /**
+     * The cause does quote the value (vo-base's enum message), so the test above proves redaction, not a quiet cause.
+     */
+    public function testTheCauseOfARedactedMessageStillQuotesTheValue(): void
+    {
+        try {
+            $this->typecast()->cast(['country' => 'SeCrEt-7f3a']);
+            self::fail('No exception thrown.');
+        } catch (TypecastException $e) {
+            self::assertStringNotContainsString('SeCrEt-7f3a', $e->getMessage());
+            self::assertStringContainsString('SeCrEt-7f3a', $e->getPrevious()?->getMessage() ?? '');
+        }
+    }
+
+    /**
      * @return iterable<string, array{mixed}>
      */
     public static function provideRawBoundedStrings(): iterable
