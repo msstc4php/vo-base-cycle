@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - unreleased
+## [1.0.0] - 2026-11-25
 
 First stable release: from here on a breaking change needs 2.0. What 1.x covers is listed in the README,
 "Backward compatibility": the class and its constructor with its parameter names, the rule syntax and handler order,
