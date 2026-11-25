@@ -30,6 +30,13 @@ as text, so "wrong type" cannot be produced for string-backed columns on SQLite.
 Int payloads must be canonical digit strings, float payloads plain decimals, DateRange ISO 8601 with offset.
 PDO SQLite returns native ints/floats, so nothing in this package relied on the old leniency.
 
+## Roave bc-check and `new` in parameter initializers
+
+Roave cannot compile `ValueObjectMapper $mapper = new ValueObjectMapper()` (same failure vo-base-laravel hit on
+0.2.0). 1.0 uses `?ValueObjectMapper $mapper = null`. The CI job compares against the latest stable tag, so the
+first run on the 1.0.0 commit still compares against v0.1.0 (with the old initializer) and may be red; it clears once
+v1.0.0 is the base. Never reintroduce a `new` initializer in a public signature.
+
 ## Rector deprecation warning
 
 `PostIncDecToPreIncDecRector` skip in the template rector.php is reported as deprecated/never registered. Template

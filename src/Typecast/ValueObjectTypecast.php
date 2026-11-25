@@ -35,8 +35,11 @@ final class ValueObjectTypecast implements CastableInterface, UncastableInterfac
      */
     private array $columns = [];
 
+    private readonly ValueObjectMapper $mapper;
+
     /**
      * @param non-empty-string $role the entity role, used in error messages
+     * @param ValueObjectMapper|null $mapper null for the built-in codecs only
      * @param bool $untrustedCastInput the role's cast() also receives data that did not come from the
      *                                 database, such as request input given to ORM::make(..., typecast: true):
      *                                 every value is then read as untrusted, and a class that must not be
@@ -44,9 +47,10 @@ final class ValueObjectTypecast implements CastableInterface, UncastableInterfac
      */
     public function __construct(
         private readonly string $role,
-        private readonly ValueObjectMapper $mapper = new ValueObjectMapper(),
+        ?ValueObjectMapper $mapper = null,
         private readonly bool $untrustedCastInput = false,
     ) {
+        $this->mapper = $mapper ?? new ValueObjectMapper();
     }
 
     /**
@@ -184,8 +188,12 @@ final class ValueObjectTypecast implements CastableInterface, UncastableInterfac
             : throw new InvalidPayloadException(\sprintf('A %s payload must be a JSON object, %s given.', $class, get_debug_type($decoded)));
     }
 
+    /**
+     * The message names the field only: the cause's message may quote the value, which then would reach logs from
+     * every failed load. The cause stays available as the previous exception.
+     */
     private function failure(string $direction, string $key, InvalidValueObjectException|JsonException $e): TypecastException
     {
-        return new TypecastException(\sprintf('Unable to %s the `%s.%s` field: %s', $direction, $this->role, $key, $e->getMessage()), 0, $e);
+        return new TypecastException(\sprintf('Unable to %s the `%s.%s` field.', $direction, $this->role, $key), 0, $e);
     }
 }

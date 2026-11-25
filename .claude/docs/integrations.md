@@ -6,7 +6,7 @@
   object, or a list of them). A list becomes the `@internal` `CompositeTypecast`.
 - Class strings are instantiated through `Spiral\Core\Container::make($class, ['database' => ..., 'schema' => ...,
   'role' => ...])`; unused named arguments are ignored. A class-typed parameter is resolved from the container
-  (bound instance, else autowired — so `ValueObjectMapper $mapper = new ValueObjectMapper()` gets a bound mapper),
+  (bound instance, else autowired — so `?ValueObjectMapper $mapper = null` gets a bound mapper),
   and `bind(ValueObjectTypecast::class, fn (string $role) => ...)` closures receive `role` by name. Verified on
   spiral/core 2.9.0 and 3.18.2. Objects in the schema are used as they are — hence "one instance per role".
 - `setRules()` is called on each handler in list order; every handler returns the rules it did not claim. **The
@@ -35,7 +35,8 @@ which turns an unknown stored code into `null`. Listed first, this handler claim
 |---|---|---|
 | `cycle/orm` | 2.10.0 | First release without PHP 8.4 compile-time deprecations in its own code (2.0.0–2.9 run the suite fine but emit ~30 implicit-nullable deprecations). The handler chain itself exists since 2.0.0. |
 | `cycle/database` | 2.12.0 | 2.11 and older emit ~60 PHP 8.4 deprecations. Also used directly by the tests. |
-| `spiral/core` | 2.9.0 (transitive) | Whatever cycle/orm 2.10 resolves; no issue seen. |
+| `spiral/core` | 2.9.0 (transitive) | Whatever cycle/orm 2.10 resolves; no issue seen. The nullable `?ValueObjectMapper $mapper = null` is still resolved from a bound singleton on 2.9.0 and 3.18.2 (re-verified 2026-11-25 UTC). |
+| `msstc4php/vo-base` | 1.4.0 | `ResolvesConcreteClass` and `ProvidesCodecs` (1.4.0); 1.1.0 had the abstract/interface bug. |
 
 Highest verified: cycle/orm 2.18.1, cycle/database 2.23.3, spiral/core 3.18.2.
 

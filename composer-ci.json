@@ -23,7 +23,7 @@
         "php": ">=8.4",
         "cycle/database": "^2.12",
         "cycle/orm": "^2.10",
-        "msstc4php/vo-base": "^1.1"
+        "msstc4php/vo-base": "^1.4"
     },
     "require-dev": {
         "deptrac/deptrac": "^4.6",

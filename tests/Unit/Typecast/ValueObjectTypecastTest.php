@@ -8,8 +8,12 @@ use Cycle\ORM\Exception\TypecastException;
 use DateTimeImmutable;
 use JsonException;
 use LogicException;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\AbstractCode;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\EmailAddressObjectCodec;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\LongCode;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\ObjectCodecs;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Priority;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\ShortCode;
 use MSSTC4PHP\ValueObject\Cycle\Typecast\ValueObjectTypecast;
 use MSSTC4PHP\ValueObject\Exception\InvalidEmailAddressException;
 use MSSTC4PHP\ValueObject\Exception\InvalidPayloadException;
@@ -199,9 +203,9 @@ final class ValueObjectTypecastTest extends TestCase
      */
     public static function provideInvalidRawValues(): iterable
     {
-        yield 'invalid content' => ['email', 'not-an-email', InvalidEmailAddressException::class, 'Unable to uncast the `account.email` field: '];
-        yield 'another value object' => ['port', EmailAddress::from('user@example.com'), InvalidPayloadException::class, 'Unable to uncast the `account.port` field: A ' . Port::class . ' payload must be an integer, ' . EmailAddress::class . ' given.'];
-        yield 'malformed JSON' => ['location', '{"lat":', JsonException::class, 'Unable to uncast the `account.location` field: Syntax error'];
+        yield 'invalid content' => ['email', 'not-an-email', InvalidEmailAddressException::class, 'Unable to uncast the `account.email` field.'];
+        yield 'another value object' => ['port', EmailAddress::from('user@example.com'), InvalidPayloadException::class, 'Unable to uncast the `account.port` field.'];
+        yield 'malformed JSON' => ['location', '{"lat":', JsonException::class, 'Unable to uncast the `account.location` field.'];
     }
 
     /**
@@ -216,7 +220,7 @@ final class ValueObjectTypecastTest extends TestCase
             $this->typecast()->uncast([$field => $raw]);
             self::fail('No exception thrown.');
         } catch (TypecastException $e) {
-            self::assertStringStartsWith($message, $e->getMessage());
+            self::assertSame($message, $e->getMessage());
             self::assertInstanceOf($cause, $e->getPrevious());
             self::assertSame(0, $e->getCode());
         }
@@ -227,12 +231,12 @@ final class ValueObjectTypecastTest extends TestCase
      */
     public static function provideInvalidStoredValues(): iterable
     {
-        yield 'invalid content' => ['email', 'not-an-email', InvalidEmailAddressException::class, 'Unable to typecast the `account.email` field: '];
-        yield 'wrong type' => ['port', 'eighty', InvalidPayloadException::class, 'Unable to typecast the `account.port` field: A ' . Port::class . ' payload must be an integer, string given.'];
-        yield 'unknown enum case' => ['country', 'XX', InvalidPayloadException::class, 'Unable to typecast the `account.country` field: "XX" is not a case of ' . CountryCode::class . '.'];
-        yield 'malformed JSON' => ['location', '{"lat":', JsonException::class, 'Unable to typecast the `account.location` field: Syntax error'];
-        yield 'JSON of the wrong shape' => ['location', '"52.52,13.405"', InvalidPayloadException::class, 'Unable to typecast the `account.location` field: A ' . GeoCoordinates::class . ' payload must be a JSON object, string given.'];
-        yield 'neither JSON text nor an array' => ['location', 52, InvalidPayloadException::class, 'Unable to typecast the `account.location` field: A ' . GeoCoordinates::class . ' payload must be a JSON object, int given.'];
+        yield 'invalid content' => ['email', 'not-an-email', InvalidEmailAddressException::class, 'Unable to typecast the `account.email` field.'];
+        yield 'wrong type' => ['port', 'eighty', InvalidPayloadException::class, 'Unable to typecast the `account.port` field.'];
+        yield 'unknown enum case' => ['country', 'XX', InvalidPayloadException::class, 'Unable to typecast the `account.country` field.'];
+        yield 'malformed JSON' => ['location', '{"lat":', JsonException::class, 'Unable to typecast the `account.location` field.'];
+        yield 'JSON of the wrong shape' => ['location', '"52.52,13.405"', InvalidPayloadException::class, 'Unable to typecast the `account.location` field.'];
+        yield 'neither JSON text nor an array' => ['location', 52, InvalidPayloadException::class, 'Unable to typecast the `account.location` field.'];
     }
 
     /**
@@ -247,9 +251,58 @@ final class ValueObjectTypecastTest extends TestCase
             $this->typecast()->cast([$field => $stored]);
             self::fail('No exception thrown.');
         } catch (TypecastException $e) {
-            self::assertStringStartsWith($message, $e->getMessage());
+            self::assertSame($message, $e->getMessage());
             self::assertInstanceOf($cause, $e->getPrevious());
             self::assertSame(0, $e->getCode());
+        }
+    }
+
+    public function testTheCauseKeepsItsOwnMessage(): void
+    {
+        try {
+            $this->typecast()->cast(['port' => 'eighty']);
+            self::fail('No exception thrown.');
+        } catch (TypecastException $e) {
+            self::assertInstanceOf(InvalidPayloadException::class, $e->getPrevious());
+            self::assertSame('A ' . Port::class . ' payload must be an integer, string given.', $e->getPrevious()->getMessage());
+        }
+    }
+
+    /**
+     * @return iterable<string, array{'cast'|'uncast', non-empty-string, string}>
+     */
+    public static function provideValuesThatMustNotLeak(): iterable
+    {
+        $secret = 'SeCrEt-7f3a';
+
+        foreach (['cast', 'uncast'] as $direction) {
+            yield $direction . ' short' => [$direction, 'email', $secret];
+            yield $direction . ' long' => [$direction, 'email', $secret . str_repeat('x', 300)];
+            yield $direction . ' over-long' => [$direction, 'email', $secret . str_repeat('x', 100_000)];
+            yield $direction . ' enum code' => [$direction, 'country', $secret];
+            yield $direction . ' JSON' => [$direction, 'location', '{"lat":"' . $secret . '"}'];
+            yield $direction . ' malformed JSON' => [$direction, 'location', '{"' . $secret];
+        }
+    }
+
+    /**
+     * Hydration errors end up in logs and error trackers: the handler's own message names the field, never the value.
+     *
+     * @param 'cast'|'uncast' $direction
+     * @param non-empty-string $field
+     */
+    #[DataProvider('provideValuesThatMustNotLeak')]
+    public function testTheMessageCarriesNoPartOfTheValue(string $direction, string $field, string $value): void
+    {
+        $typecast = $this->typecast();
+
+        try {
+            $direction === 'cast' ? $typecast->cast([$field => $value]) : $typecast->uncast([$field => $value]);
+            self::fail('No exception thrown.');
+        } catch (TypecastException $e) {
+            self::assertSame(\sprintf('Unable to %s the `account.%s` field.', $direction === 'cast' ? 'typecast' : 'uncast', $field), $e->getMessage());
+            self::assertStringNotContainsStringIgnoringCase('secret', $e->getMessage());
+            self::assertNotNull($e->getPrevious());
         }
     }
 
@@ -274,8 +327,9 @@ final class ValueObjectTypecastTest extends TestCase
             $this->typecast()->uncast(['title' => $raw]);
             self::fail('No exception thrown.');
         } catch (TypecastException $e) {
-            self::assertSame('Unable to uncast the `account.title` field: A ' . BoundedString::class . ' cannot be read from untrusted input: its payload carries its own constraints.', $e->getMessage());
+            self::assertSame('Unable to uncast the `account.title` field.', $e->getMessage());
             self::assertInstanceOf(InvalidPayloadException::class, $e->getPrevious());
+            self::assertSame('A ' . BoundedString::class . ' cannot be read from untrusted input: its payload carries its own constraints.', $e->getPrevious()->getMessage());
         }
     }
 
@@ -331,7 +385,7 @@ final class ValueObjectTypecastTest extends TestCase
             $typecast->uncast(['title' => new BoundedString("\xB1", 0, 10)]);
             self::fail('No exception thrown.');
         } catch (TypecastException $e) {
-            self::assertSame('Unable to uncast the `account.title` field: Malformed UTF-8 characters, possibly incorrectly encoded', $e->getMessage());
+            self::assertSame('Unable to uncast the `account.title` field.', $e->getMessage());
             self::assertInstanceOf(JsonException::class, $e->getPrevious());
             self::assertSame(0, $e->getCode());
         }
@@ -345,6 +399,67 @@ final class ValueObjectTypecastTest extends TestCase
         self::assertSame(['email' => '{"address":"user@example.com"}'], $typecast->uncast(['email' => EmailAddress::from('user@example.com')]));
         self::assertEquals(['email' => EmailAddress::from('user@example.com')], $typecast->cast(['email' => '{"address":"user@example.com"}']));
         self::assertEquals(['location' => GeoCoordinates::fromFloats(1.0, 2.0)], $typecast->cast(['location' => '{"lat":1,"lng":2}']));
+    }
+
+    public function testAnAbstractClassThatResolvesItsConcreteClassIsClaimed(): void
+    {
+        $typecast = new ValueObjectTypecast('account');
+        self::assertSame([], $typecast->setRules(['code' => AbstractCode::class, 'short' => ShortCode::class]));
+
+        $cast = $typecast->cast(['code' => 'abc', 'short' => 'xy']);
+        self::assertEquals(['code' => new ShortCode('abc'), 'short' => new ShortCode('xy')], $cast);
+        self::assertInstanceOf(ShortCode::class, $cast['code']);
+        self::assertInstanceOf(LongCode::class, $typecast->cast(['code' => 'abcde'])['code']);
+
+        self::assertSame(['code' => 'abcde', 'short' => 'xy'], $typecast->uncast(['code' => new LongCode('abcde'), 'short' => new ShortCode('xy')]));
+        self::assertSame(['code' => 'abcd'], $typecast->uncast(['code' => 'abcd']));
+    }
+
+    /**
+     * @return iterable<string, array{'cast'|'uncast', non-empty-string, string}>
+     */
+    public static function provideCodesOfNoOrAnotherKind(): iterable
+    {
+        foreach (['cast', 'uncast'] as $direction) {
+            yield $direction . ' no kind' => [$direction, 'code', 'ABC'];
+            yield $direction . ' too long for any kind' => [$direction, 'code', 'abcdefg'];
+            yield $direction . ' another kind' => [$direction, 'short', 'abcd'];
+        }
+    }
+
+    /**
+     * @param 'cast'|'uncast' $direction
+     * @param non-empty-string $field
+     */
+    #[DataProvider('provideCodesOfNoOrAnotherKind')]
+    public function testACodeOfNoOrAnotherKindFails(string $direction, string $field, string $value): void
+    {
+        $typecast = new ValueObjectTypecast('account');
+        $typecast->setRules(['code' => AbstractCode::class, 'short' => ShortCode::class]);
+
+        $this->expectException(TypecastException::class);
+
+        $direction === 'cast' ? $typecast->cast([$field => $value]) : $typecast->uncast([$field => $value]);
+    }
+
+    public function testAMapperBuiltFromACodecSetUsesEveryCodecOfTheSet(): void
+    {
+        $typecast = new ValueObjectTypecast('account', new ValueObjectMapper(ObjectCodecs::all()));
+        $typecast->setRules(['email' => EmailAddress::class, 'port' => Port::class, 'country' => CountryCode::class]);
+
+        $stored = ['email' => '{"address":"user@example.com"}', 'port' => '{"number":8080}', 'country' => 'DE'];
+        $values = ['email' => EmailAddress::from('user@example.com'), 'port' => Port::from(8080), 'country' => CountryCode::DE];
+
+        self::assertSame($stored, $typecast->uncast($values));
+        self::assertEquals($values, $typecast->cast($stored));
+    }
+
+    public function testWithoutAMapperOnlyTheBuiltInCodecsApply(): void
+    {
+        $typecast = new ValueObjectTypecast('account');
+        $typecast->setRules(['email' => EmailAddress::class, 'location' => GeoCoordinates::class]);
+
+        self::assertSame(['email' => 'user@example.com', 'location' => '{"lat":1,"lng":2}'], $typecast->uncast(['email' => EmailAddress::from('user@example.com'), 'location' => GeoCoordinates::fromFloats(1.0, 2.0)]));
     }
 
     private function typecast(): ValueObjectTypecast

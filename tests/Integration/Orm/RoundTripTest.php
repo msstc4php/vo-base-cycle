@@ -18,10 +18,14 @@ use Cycle\ORM\Schema;
 use Cycle\ORM\SchemaInterface;
 use DateTimeImmutable;
 use LogicException;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\AbstractCode;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Account;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Admin;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\EmailAddressObjectCodec;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\LongCode;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\ObjectCodecs;
 use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\Priority;
+use MSSTC4PHP\ValueObject\Cycle\Tests\Fixture\ShortCode;
 use MSSTC4PHP\ValueObject\Cycle\Typecast\ValueObjectTypecast;
 use MSSTC4PHP\ValueObject\Exception\InvalidEmailAddressException;
 use MSSTC4PHP\ValueObject\Exception\InvalidPayloadException;
@@ -56,6 +60,7 @@ final class RoundTripTest extends TestCase
         'location' => GeoCoordinates::class,
         'period' => DateRange::class,
         'title' => BoundedString::class,
+        'code' => AbstractCode::class,
         'visits' => 'int',
     ];
 
@@ -71,7 +76,7 @@ final class RoundTripTest extends TestCase
         ]));
         $this->database()->execute(
             'CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT, port INTEGER, discount REAL,'
-            . ' country TEXT, priority INTEGER, location TEXT, period TEXT, title TEXT, visits INTEGER)',
+            . ' country TEXT, priority INTEGER, location TEXT, period TEXT, title TEXT, code TEXT, visits INTEGER)',
         );
     }
 
@@ -85,6 +90,7 @@ final class RoundTripTest extends TestCase
         $account->priority = Priority::High;
         $account->location = GeoCoordinates::fromFloats(52.52, 13.405);
         $account->period = new DateRange(new DateTimeImmutable('2026-01-01T00:00:00+00:00'), new DateTimeImmutable('2026-12-31T23:59:59.999999+00:00'));
+        $account->code = new LongCode('abcde');
         $account->visits = 3;
 
         new EntityManager($this->orm())->persist($account)->run();
@@ -99,6 +105,7 @@ final class RoundTripTest extends TestCase
             'location' => '{"lat":52.52,"lng":13.405}',
             'period' => '{"start":"2026-01-01T00:00:00.000000+00:00","end":"2026-12-31T23:59:59.999999+00:00"}',
             'title' => null,
+            'code' => 'abcde',
             'visits' => 3,
         ]], $this->storedRows());
 
@@ -107,6 +114,7 @@ final class RoundTripTest extends TestCase
         $this->assertEqualFields($account, $loaded);
         self::assertSame(CountryCode::DE, $loaded->country);
         self::assertSame(Priority::High, $loaded->priority);
+        self::assertInstanceOf(LongCode::class, $loaded->code);
     }
 
     public function testNullColumnsStayNull(): void
@@ -115,7 +123,7 @@ final class RoundTripTest extends TestCase
 
         self::assertSame([[
             'id' => 1, 'email' => null, 'port' => null, 'discount' => null, 'country' => null, 'priority' => null,
-            'location' => null, 'period' => null, 'title' => null, 'visits' => null,
+            'location' => null, 'period' => null, 'title' => null, 'code' => null, 'visits' => null,
         ]], $this->storedRows());
         $expected = new Account();
         $expected->id = 1;
@@ -147,7 +155,7 @@ final class RoundTripTest extends TestCase
             $this->load(1);
             self::fail('No exception thrown.');
         } catch (TypecastException $e) {
-            self::assertStringStartsWith('Unable to typecast the `account.email` field: ', $e->getMessage());
+            self::assertSame('Unable to typecast the `account.email` field.', $e->getMessage());
             self::assertInstanceOf(InvalidEmailAddressException::class, $e->getPrevious());
         }
     }
@@ -161,7 +169,7 @@ final class RoundTripTest extends TestCase
             $this->load(1);
             self::fail('No exception thrown.');
         } catch (TypecastException $e) {
-            self::assertStringStartsWith('Unable to typecast the `account.port` field: ', $e->getMessage());
+            self::assertSame('Unable to typecast the `account.port` field.', $e->getMessage());
             self::assertInstanceOf(InvalidPayloadException::class, $e->getPrevious());
         }
     }
@@ -219,6 +227,27 @@ final class RoundTripTest extends TestCase
         $loaded = $this->orm(container: $container)->getRepository('account')->findByPK(1);
         self::assertInstanceOf(Account::class, $loaded);
         self::assertEquals(EmailAddress::from('user@example.com'), $loaded->email);
+    }
+
+    public function testAMapperBoundFromACodecSetCarriesEveryCodecOfTheSet(): void
+    {
+        $container = new Container();
+        $container->bindSingleton(ValueObjectMapper::class, new ValueObjectMapper(ObjectCodecs::all()));
+
+        $account = new Account();
+        $account->email = EmailAddress::from('user@example.com');
+        $account->port = Port::from(8080);
+        $account->code = new ShortCode('abc');
+
+        new EntityManager($this->orm(container: $container))->persist($account)->run();
+
+        $row = $this->storedRows()[0];
+        self::assertSame(['{"address":"user@example.com"}', '{"number":8080}', 'abc'], [$row['email'], $row['port'], $row['code']]);
+        $loaded = $this->orm(container: $container)->getRepository('account')->findByPK(1);
+        self::assertInstanceOf(Account::class, $loaded);
+        self::assertEquals(EmailAddress::from('user@example.com'), $loaded->email);
+        self::assertEquals(Port::from(8080), $loaded->port);
+        self::assertInstanceOf(ShortCode::class, $loaded->code);
     }
 
     /**

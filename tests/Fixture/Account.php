@@ -33,5 +33,7 @@ class Account
 
     public ?BoundedString $title = null;
 
+    public ?AbstractCode $code = null;
+
     public ?int $visits = null;
 }

@@ -15,13 +15,13 @@ Neither this package nor the core is on Packagist yet, so register both GitHub r
         { "type": "vcs", "url": "https://github.com/msstc4php/vo-base-cycle" }
     ],
     "require": {
-        "msstc4php/vo-base-cycle": "^0.1"
+        "msstc4php/vo-base-cycle": "^1.0"
     }
 }
 ```
 
-Requires PHP >= 8.4, `cycle/orm` ^2.10 and `cycle/database` ^2.12. `cycle/database` is required explicitly
-because older releases that `cycle/orm` ^2.10 would accept emit PHP 8.4 deprecations.
+Requires PHP >= 8.4, `msstc4php/vo-base` ^1.4, `cycle/orm` ^2.10 and `cycle/database` ^2.12. `cycle/database` is
+required explicitly because older releases that `cycle/orm` ^2.10 would accept emit PHP 8.4 deprecations.
 
 ## Usage with a schema array
 
@@ -49,7 +49,9 @@ use MSSTC4PHP\ValueObject\Cycle\Typecast\ValueObjectTypecast;
 ```
 
 Cycle instantiates the handler once per role and passes the role name; nothing else to configure. A rule may be
-written with a leading backslash (`'\App\Money'`).
+written with a leading backslash (`'\App\Money'`). An abstract class that picks its concrete subclass from the value
+(vo-base's `ResolvesConcreteClass`, such as vo-documents' MRZ) is a valid rule too; the loaded value is an instance of
+the subclass.
 
 ## Usage with annotated entities
 
@@ -77,9 +79,9 @@ class Account
 
 ## Custom codecs
 
-A composite of your own needs a `PayloadCodec` (see the core). The handler takes a `ValueObjectMapper`; Cycle builds
-handlers through its Spiral container, which injects a mapper bound there. This works with cached or compiled
-schemas, since the schema keeps only the class name:
+A composite of your own needs a `PayloadCodec` (see the core). The handler takes a `ValueObjectMapper` (`null`, the
+default, means the built-in codecs only); Cycle builds handlers through its Spiral container, which injects a mapper
+bound there. This works with cached or compiled schemas, since the schema keeps only the class name:
 
 ```php
 use Spiral\Core\Container;
@@ -112,8 +114,10 @@ S::TYPECAST_HANDLER => [new ValueObjectTypecast('account', new ValueObjectMapper
 
 - `null` stays `null` in both directions.
 - An invalid stored value fails the load with Cycle's `TypecastException` (``Unable to typecast the `account.email`
-  field: ...``); the value object's `InvalidValueObjectException` is the previous exception. No silent `null` —
-  unlike Cycle's own enum rule, which turns an unknown code into `null`.
+  field.``); the value object's `InvalidValueObjectException` (or a `JsonException` for malformed JSON) is the
+  previous exception. The message names the field only and never quotes the value, so stored data does not end up
+  in logs; the previous exception's message is vo-base's own and may quote an excerpt. No silent `null` — unlike
+  Cycle's own enum rule, which turns an unknown code into `null`.
 - Writing an instance stores its payload. A raw value in a value-object column (an untyped property) is validated
   as untrusted input and stored in canonical form; an invalid one fails the write with `TypecastException`. A raw
   `BoundedString` always fails: its payload carries its own bounds.
@@ -157,6 +161,33 @@ $container->bind(
 With joined-table inheritance (`SchemaInterface::PARENT`) give each role its own `TYPECAST` and
 `TYPECAST_HANDLER` for its own columns. Cycle chains the parent role's handler with the child's; a value already
 converted by one is left alone by the other, so both tables round-trip (covered by a test).
+
+## Backward compatibility
+
+1.x follows semantic versioning; a breaking change needs 2.0. Covered by 1.x:
+
+- **Code API:** the class `Typecast\ValueObjectTypecast` and its constructor
+  `(string $role, ?ValueObjectMapper $mapper = null, bool $untrustedCastInput = false)` with these parameter names
+  (named arguments); the `CastableInterface` / `UncastableInterface` methods it implements.
+- **Names users write:** the rule syntax (a value-object or backed-enum FQCN, with or without a leading backslash) and
+  the handler order (listed before Cycle's `Typecast`); container injection of a bound `ValueObjectMapper` and of the
+  `role` argument.
+- **Data:** the stored formats above. They are vo-base's payload layer, the same as the Doctrine types and the other
+  bridges write, so a row written through one reads through another.
+- **Exceptions:** `Cycle\ORM\Exception\TypecastException` (code 0, the cause as previous) for an invalid stored or
+  raw value and for a composite that cannot be encoded as JSON; `LogicException`, unwrapped, when the handler is
+  built for a value-object rule without a payload form, or for a trusted-source-only rule (`BoundedString`) under
+  `untrustedCastInput`. The previous exception is vo-base's own exception, passed through unchanged.
+- **Enums:** a backed-enum rule is claimed by this handler, and an unknown stored code fails instead of becoming
+  `null`.
+- **Versions:** a minor may add support for a new Cycle or PHP major; dropping a supported Cycle or PHP version needs
+  a major.
+
+A minor never refuses a value an earlier 1.x accepted: the handler adds no validation of its own, the value objects
+(vo-base and the domain packages) decide, and they follow the same rule.
+
+Not covered: exception message wording (the handler's messages name a role and a field, never the value);
+anything marked `@internal`.
 
 ## Development
 
