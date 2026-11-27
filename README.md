@@ -187,7 +187,7 @@ converted by one is left alone by the other, so both tables round-trip (covered 
 A minor never refuses a value an earlier 1.x accepted: the handler adds no validation of its own, the value objects
 (vo-base and the domain packages) decide, and they follow the same rule.
 
-Not covered: exception message wording (the handler's messages name a role and a field, never the value);
+Not covered: exception message wording (the handler's messages name a role, a field, a class or a debug type, never the value);
 anything marked `@internal`.
 
 ## Development
